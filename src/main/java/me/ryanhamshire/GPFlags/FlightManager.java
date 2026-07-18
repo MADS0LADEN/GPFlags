@@ -20,7 +20,6 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageEvent;
-import org.bukkit.event.entity.EntityToggleGlideEvent;
 import org.bukkit.event.player.PlayerGameModeChangeEvent;
 import org.bukkit.event.player.PlayerToggleFlightEvent;
 import org.jetbrains.annotations.NotNull;
@@ -216,6 +215,10 @@ public class FlightManager implements Listener {
             return;
         }
         if (flightAllowedAtNewLocation == Boolean.FALSE) {
+            // Creative/spectator flight and elytra are intentionally not part of NoFlight
+            if (player.getGameMode() == GameMode.CREATIVE || player.getGameMode() == GameMode.SPECTATOR) {
+                return;
+            }
             turnOffFlight(player);
         }
     }
@@ -258,20 +261,9 @@ public class FlightManager implements Listener {
         }, 1);
     }
 
-    @EventHandler(ignoreCancelled = true, priority = EventPriority.HIGHEST)
-    private void onToggleGlide(EntityToggleGlideEvent event) {
-        if (!(event.getEntity() instanceof Player)) return;
-        if (!event.isGliding()) return;
-        Player player = (Player) event.getEntity();
-        Location location = player.getLocation();
-        Claim claim = GriefPrevention.instance.dataStore.getClaimAt(location, false, null);
-        if (!shouldEnforceNoFlight(player, location, claim)) return;
-        event.setCancelled(true);
-        turnOffFlight(player, true);
-    }
-
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     private void onGameModeChange(PlayerGameModeChangeEvent event) {
+        // Re-check after leaving creative/spectator (NoFlight does not apply in those modes)
         Bukkit.getScheduler().runTaskLater(GPFlags.getInstance(), () -> {
             enforceNoFlightIfNeeded(event.getPlayer());
             managePlayerFlight(event.getPlayer(), null, event.getPlayer().getLocation());
@@ -280,22 +272,24 @@ public class FlightManager implements Listener {
 
     /**
      * Returns true when NoFlight is active and the player is not allowed to bypass it.
+     * Creative, spectator and elytra are not covered by NoFlight (use NoElytra for gliding).
      */
     public static boolean shouldEnforceNoFlight(@NotNull Player player, @NotNull Location location, @Nullable Claim claim) {
-        if (player.getGameMode() == GameMode.SPECTATOR) return false;
+        GameMode mode = player.getGameMode();
+        if (mode == GameMode.CREATIVE || mode == GameMode.SPECTATOR) return false;
         return !FlagDef_NoFlight.letPlayerFly(player, location, claim);
     }
 
     /**
      * Strips active flight and allowFlight when NoFlight applies at the player's location.
+     * Does not touch elytra gliding or creative/spectator flight.
      */
     public static void enforceNoFlightIfNeeded(@NotNull Player player) {
-        if (player.getGameMode() == GameMode.SPECTATOR) return;
         Location location = player.getLocation();
         PlayerData playerData = GriefPrevention.instance.dataStore.getPlayerData(player.getUniqueId());
         Claim claim = GriefPrevention.instance.dataStore.getClaimAt(location, false, playerData.lastClaim);
         if (!shouldEnforceNoFlight(player, location, claim)) return;
-        if (!player.getAllowFlight() && !player.isFlying() && !player.isGliding()) return;
+        if (!player.getAllowFlight() && !player.isFlying()) return;
         turnOffFlight(player, false);
     }
 
@@ -304,13 +298,14 @@ public class FlightManager implements Listener {
     }
 
     private static void turnOffFlight(@NotNull Player player, boolean notify) {
-        boolean hadFlight = player.getAllowFlight() || player.isFlying() || player.isGliding();
+        // Never strip creative/spectator flight or interfere with elytra via NoFlight
+        GameMode mode = player.getGameMode();
+        if (mode == GameMode.CREATIVE || mode == GameMode.SPECTATOR) return;
+
+        boolean hadFlight = player.getAllowFlight() || player.isFlying();
         if (!hadFlight) return;
         if (notify) {
             MessagingUtil.sendMessage(player, TextMode.Err, Messages.CantFlyHere);
-        }
-        if (player.isGliding()) {
-            player.setGliding(false);
         }
         player.setFlying(false);
         player.setAllowFlight(false);

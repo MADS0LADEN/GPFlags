@@ -1,6 +1,7 @@
 package me.ryanhamshire.GPFlags.flags;
 
 import me.ryanhamshire.GPFlags.*;
+import me.ryanhamshire.GPFlags.util.MessagingUtil;
 import me.ryanhamshire.GPFlags.util.Util;
 import me.ryanhamshire.GriefPrevention.Claim;
 import me.ryanhamshire.GriefPrevention.GriefPrevention;
@@ -8,6 +9,7 @@ import org.bukkit.Location;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.entity.EntityToggleGlideEvent;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -29,9 +31,10 @@ public class FlagDef_NoElytra extends PlayerMovementFlagDefinition {
         if (Util.shouldBypass(player, claimTo, flagTo)) return;
         player.setGliding(false);
         FlightManager.considerForFallImmunity(player);
+        MessagingUtil.sendMessage(player, TextMode.Err, Messages.CantElytraHere);
     }
 
-    @EventHandler
+    @EventHandler(ignoreCancelled = true, priority = EventPriority.HIGHEST)
     private void onToggleElytra(EntityToggleGlideEvent event) {
         Entity entity = event.getEntity();
         if (!(entity instanceof Player)) return;
@@ -44,7 +47,7 @@ public class FlagDef_NoElytra extends PlayerMovementFlagDefinition {
         if (Util.shouldBypass(player, claim, flag)) return;
 
         event.setCancelled(true);
-
+        MessagingUtil.sendMessage(player, TextMode.Err, Messages.CantElytraHere);
     }
 
     @Override

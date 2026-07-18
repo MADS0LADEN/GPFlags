@@ -87,6 +87,7 @@ public enum Messages {
     CommandListRequired,
     CommandBlockedHere,
     CantFlyHere,
+    CantElytraHere,
     EnableNoFlight,
     DisableNoFlight,
     AddedEnterCommand,
