@@ -4,3 +4,7 @@
 /dependency-reduced-pom.xml
 /.classpath
 /.project
+/.m2/
+/stub-elitemobs/
+/stub-elitemobs.jar
+/*.jar

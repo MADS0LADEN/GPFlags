@@ -17,8 +17,11 @@ import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.entity.EntityToggleGlideEvent;
+import org.bukkit.event.player.PlayerGameModeChangeEvent;
 import org.bukkit.event.player.PlayerToggleFlightEvent;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -29,6 +32,15 @@ import java.util.UUID;
 
 public class FlightManager implements Listener {
     private static final HashSet<Player> fallImmune = new HashSet<>();
+    private static final int NOFLIGHT_ENFORCE_INTERVAL_TICKS = 10;
+
+    public FlightManager() {
+        Bukkit.getScheduler().runTaskTimer(GPFlags.getInstance(), () -> {
+            for (Player player : Bukkit.getOnlinePlayers()) {
+                enforceNoFlightIfNeeded(player);
+            }
+        }, NOFLIGHT_ENFORCE_INTERVAL_TICKS, NOFLIGHT_ENFORCE_INTERVAL_TICKS);
+    }
 
     @EventHandler
     public void onClaimTransfer(ClaimTransferEvent event) {
@@ -208,37 +220,98 @@ public class FlightManager implements Listener {
         }
     }
 
-    @EventHandler
+    @EventHandler(ignoreCancelled = true, priority = EventPriority.HIGHEST)
     private void onFlyToggle(PlayerToggleFlightEvent event) {
-        if (event.isFlying()) return;
         Player player = event.getPlayer();
+        Location location = player.getLocation();
+        Claim claim = GriefPrevention.instance.dataStore.getClaimAt(location, false, null);
+
+        if (event.isFlying()) {
+            if (shouldEnforceNoFlight(player, location, claim)) {
+                event.setCancelled(true);
+                turnOffFlight(player, true);
+            }
+            return;
+        }
+
         Bukkit.getScheduler().runTaskLater(GPFlags.getInstance(), () -> {
-            Location location = player.getLocation();
-            Claim claim = GriefPrevention.instance.dataStore.getClaimAt(location, false, null);
+            Location currentLocation = player.getLocation();
+            Claim currentClaim = GriefPrevention.instance.dataStore.getClaimAt(currentLocation, false, null);
             boolean manageFlight = gpfManagesFlight(player);
             if (!manageFlight) return;
 
-            if (FlagDef_OwnerMemberFly.letPlayerFly(player, location, claim)) {
+            if (FlagDef_OwnerMemberFly.letPlayerFly(player, currentLocation, currentClaim)) {
                 turnOnFlight(player);
                 return;
             }
-            if (FlagDef_OwnerFly.letPlayerFly(player, location, claim)) {
+            if (FlagDef_OwnerFly.letPlayerFly(player, currentLocation, currentClaim)) {
                 turnOnFlight(player);
                 return;
             }
-            if (!FlagDef_NoFlight.letPlayerFly(player, location, claim)) {
+            if (!FlagDef_NoFlight.letPlayerFly(player, currentLocation, currentClaim)) {
                 return;
             }
-            if (FlagDef_PermissionFly.letPlayerFly(player, location, claim)) {
+            if (FlagDef_PermissionFly.letPlayerFly(player, currentLocation, currentClaim)) {
                 turnOnFlight(player);
                 return;
             }
         }, 1);
     }
 
+    @EventHandler(ignoreCancelled = true, priority = EventPriority.HIGHEST)
+    private void onToggleGlide(EntityToggleGlideEvent event) {
+        if (!(event.getEntity() instanceof Player)) return;
+        if (!event.isGliding()) return;
+        Player player = (Player) event.getEntity();
+        Location location = player.getLocation();
+        Claim claim = GriefPrevention.instance.dataStore.getClaimAt(location, false, null);
+        if (!shouldEnforceNoFlight(player, location, claim)) return;
+        event.setCancelled(true);
+        turnOffFlight(player, true);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    private void onGameModeChange(PlayerGameModeChangeEvent event) {
+        Bukkit.getScheduler().runTaskLater(GPFlags.getInstance(), () -> {
+            enforceNoFlightIfNeeded(event.getPlayer());
+            managePlayerFlight(event.getPlayer(), null, event.getPlayer().getLocation());
+        }, 1);
+    }
+
+    /**
+     * Returns true when NoFlight is active and the player is not allowed to bypass it.
+     */
+    public static boolean shouldEnforceNoFlight(@NotNull Player player, @NotNull Location location, @Nullable Claim claim) {
+        if (player.getGameMode() == GameMode.SPECTATOR) return false;
+        return !FlagDef_NoFlight.letPlayerFly(player, location, claim);
+    }
+
+    /**
+     * Strips active flight and allowFlight when NoFlight applies at the player's location.
+     */
+    public static void enforceNoFlightIfNeeded(@NotNull Player player) {
+        if (player.getGameMode() == GameMode.SPECTATOR) return;
+        Location location = player.getLocation();
+        PlayerData playerData = GriefPrevention.instance.dataStore.getPlayerData(player.getUniqueId());
+        Claim claim = GriefPrevention.instance.dataStore.getClaimAt(location, false, playerData.lastClaim);
+        if (!shouldEnforceNoFlight(player, location, claim)) return;
+        if (!player.getAllowFlight() && !player.isFlying() && !player.isGliding()) return;
+        turnOffFlight(player, false);
+    }
+
     private static void turnOffFlight(@NotNull Player player) {
-        if (!player.getAllowFlight()) return;
-        MessagingUtil.sendMessage(player, TextMode.Err, Messages.CantFlyHere);
+        turnOffFlight(player, true);
+    }
+
+    private static void turnOffFlight(@NotNull Player player, boolean notify) {
+        boolean hadFlight = player.getAllowFlight() || player.isFlying() || player.isGliding();
+        if (!hadFlight) return;
+        if (notify) {
+            MessagingUtil.sendMessage(player, TextMode.Err, Messages.CantFlyHere);
+        }
+        if (player.isGliding()) {
+            player.setGliding(false);
+        }
         player.setFlying(false);
         player.setAllowFlight(false);
         considerForFallImmunity(player);
